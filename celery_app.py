@@ -9,7 +9,8 @@ celery_app = Celery(
     config.APP_NAME,
     broker = config.CELERY_BROKER_URL,
     backend = config.CELERY_RESULT_BACKEND,
-    include = ['backend.data_preprocessing']
+    include = ['backend.data_preprocessing',
+               'backend.text_embedding']
 )
 
 celery_app.conf.update(

@@ -1,4 +1,3 @@
-import os
 import psycopg2
 import config
 from pinecone import Pinecone, ServerlessSpec
