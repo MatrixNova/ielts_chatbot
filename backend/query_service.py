@@ -93,7 +93,7 @@ def initialize_selected_llm(model_choice):
     try:
         mistral_api_key = config.MISTRAL_API_KEY
 
-        if model_choice == "Mistral":
+        if model_choice == config.MISTRAL_MODEL_CHOICE:
             if not mistral_api_key:
                 raise ValueError("An error has occurred. Mistral API key not found")
             
@@ -101,14 +101,14 @@ def initialize_selected_llm(model_choice):
         
         openai_api_key = config.OPENAI_API_KEY
 
-        if model_choice == "GPT 4.1":
+        if model_choice == config.OPENAI_MODEL_CHOICE:
             if not openai_api_key:
                 raise ValueError("An error has occurred. OpenAI API key not found")
             
             return OpenAI(api_key = openai_api_key)
 
         else:
-            raise ValueError(f"Unsupported model {model_choice}. Please choose Mistral or GPT 4.1")
+            raise ValueError(f"Unsupported model {model_choice}. Please choose {config.MISTRAL_MODEL_CHOICE} or {config.OPENAI_MODEL_CHOICE}")
         
     except Exception as e:
         logger.critical("%s - An error has occured when initnializing LLM: %s", validate_status(ProcessingStatus.LLM_INIT_FAILED), e, exc_info=True)
@@ -164,7 +164,7 @@ def query_passage(query, pc, index, top_k = 3):
     
     except AttributeError:
         logger.error("%s - An error has occured when trying to access Pinecone embedding response.", 
-                     validate_status(ProcessingStatus.PINECONE_QUERY_FAILED))
+                     validate_status(ProcessingStatus.PINECONE_QUERY_FAILED))   
 
     except Exception as e:
         logger.error("%s - An error has occured during Pinecone query or embedding process: %s",
@@ -199,7 +199,7 @@ def generate_reading_passages(model_choice, query, passages, llm_client):
     )
 
     try:    
-        model = "mistral-small-latest" if model_choice == "Mistral" else "gpt-4.1-2025-04-14"
+        model = config.MISTRAL_MODEL if model_choice == config.MISTRAL_MODEL_CHOICE else config.OPENAI_MODEL
         return call_llm_chat(llm_client, model, "You are an IELTs Reading tutor", prompt)
     
     except Exception as e:
@@ -255,7 +255,7 @@ def generate_questions(model_choice, passage, llm_client):
     )
 
     try:
-        model = "mistral-small-latest" if model_choice == "Mistral" else "gpt-4.1-2025-04-14"
+        model = config.MISTRAL_MODEL if model_choice == config.MISTRAL_MODEL_CHOICE else config.OPENAI_MODEL
 
         raw_output = call_llm_chat(llm_client, model, "You are an IELTS Reading tutor.", prompt)
         cleaned = re.sub(r"^```json\s*|\s*```$", "", raw_output.strip())
