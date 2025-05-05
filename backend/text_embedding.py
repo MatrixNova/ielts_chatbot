@@ -13,7 +13,7 @@ try:
 
 except ImportError as e:
     logger.exception("An exception has occurred when importing celery_app instance."
-                     "Ensure celery.py exist in the project root. Error: %s", e)
+                     f"Ensure celery.py exist in the project root. Error: {e}")
     raise
 
 # Database Pooling Context Manager Import

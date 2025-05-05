@@ -17,7 +17,7 @@ try:
 
 except ImportError as e:
     logger.exception("An exception has occurred when importing celery_app instance."
-                     "Ensure celery.py exist in the project root. Error: %s", e)
+                     f"Ensure celery.py exist in the project root. Error: {e}")
     raise
 
 # Status Constants
@@ -85,26 +85,32 @@ def initialize_pinecone():
 
         return pc, index
 
+    except ValueError as e:
+        logger.critical(f"Configuration error: {e}")
+        return None, None
+    
     except Exception as e:
         logger.critical("An error has occurred. %s - %s", validate_status(ProcessingStatus.PINECONE_INIT_FAILED), e, exc_info=True)
         return None, None
     
 def initialize_selected_llm(model_choice):
     try:
-        mistral_api_key = config.MISTRAL_API_KEY
-
         if model_choice == config.MISTRAL_MODEL_CHOICE:
+            mistral_api_key = config.MISTRAL_API_KEY
+
             if not mistral_api_key:
                 raise ValueError("An error has occurred. Mistral API key not found")
             
+            logger.info("Mistral client has been successfully initialized")
             return Mistral(api_key = mistral_api_key)
-        
-        openai_api_key = config.OPENAI_API_KEY
 
         if model_choice == config.OPENAI_MODEL_CHOICE:
+            openai_api_key = config.OPENAI_API_KEY
+            
             if not openai_api_key:
                 raise ValueError("An error has occurred. OpenAI API key not found")
             
+            logger.info("OpenAI client has been successfully initialized")
             return OpenAI(api_key = openai_api_key)
 
         else:
@@ -117,20 +123,27 @@ def initialize_selected_llm(model_choice):
 
 @retry(stop = stop_after_attempt(3), wait = wait_fixed(2))
 def call_llm_chat(client, model_name, system_prompt, user_prompt):
-    response = client.chat.complete(
-        model = model_name,
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-    )
+    try:
+        response = client.chat.complete(
+            model = model_name,
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ]
+        )
 
-    return response.choices[0].message.content
+        return response.choices[0].message.content
+    
+    except Exception as e:
+        raise Exception(f"An error has occurred during the {model_name} API call: {e}")
 
-def query_passage(query, pc, index, top_k = 3):
+def query_passage(query, pc, index, top_k: int = 3):
     if not pc or not index:
         logger.error("An error has occured. Pinecone client or index cannot be initialize globally")
         return None
+    
+    if not isinstance(top_k, int) or top_k <= 0:
+        raise ValueError("top_k must be a positive integer")
     
     try:
         embedding_responses = pc.inference.embed(
@@ -166,11 +179,11 @@ def query_passage(query, pc, index, top_k = 3):
         logger.error("%s - An error has occured when trying to access Pinecone embedding response.", 
                      validate_status(ProcessingStatus.PINECONE_QUERY_FAILED))   
 
-    except Exception as e:
+    except (AttributeError, Exception) as e:
         logger.error("%s - An error has occured during Pinecone query or embedding process: %s",
                      validate_status(ProcessingStatus.PINECONE_QUERY_FAILED), e, exc_info=True)
         
-        return None
+        raise
 
 def generate_reading_passages(model_choice, query, passages, llm_client):
     context = " ".join(passages).strip()
@@ -178,11 +191,13 @@ def generate_reading_passages(model_choice, query, passages, llm_client):
     # Fallback if Pinecone cannot find the suitable passages
     if not context:
         context = f"A passage about: {query}"
-        
-    prompt = (
-        """You are an IELTS Reading expert. Based on the following context, generate an IELTS-style academic reading passage.
 
-        f'\"\"\"{context}\"\"\"'
+    system_prompt = ("""You are an IELTs Reading expert. Your task is to generate an IELTS-style academic reading passage.""")
+
+    user_prompt = (
+        f"""Based on the following context, generate an IELTS-style academic reading passage.
+
+        \"\"\"{context}\"\"\"
 
         Please follow this structure:
 
@@ -200,7 +215,7 @@ def generate_reading_passages(model_choice, query, passages, llm_client):
 
     try:    
         model = config.MISTRAL_MODEL if model_choice == config.MISTRAL_MODEL_CHOICE else config.OPENAI_MODEL
-        return call_llm_chat(llm_client, model, "You are an IELTs Reading tutor", prompt)
+        return call_llm_chat(llm_client, model, system_prompt, user_prompt)
     
     except Exception as e:
         logger.error("%s - Error occured during API call for %s. Passage generation failed.",
@@ -209,11 +224,12 @@ def generate_reading_passages(model_choice, query, passages, llm_client):
         return None
 
 def generate_questions(model_choice, passage, llm_client):
-    prompt = (
-        """ You are an IELTS Reading expert that generates IELTs-style reading questions based on a providede passage.
-        Your task is to output ONLY a valid JSON array containing exactly 10 object questions based on the passage below:
+    system_prompt = ("""You are an IELTS Reading expert that generates IELTs-style reading questions based on a provided passage.""")
 
-        f'\"\"\"{passage}\"\"\"'
+    user_prompt = (
+        f""" Your task is to output ONLY a valid JSON array containing exactly 10 object questions based on the passage below:
+
+        \"\"\"{passage}\"\"\"
 
         Please follow this structure:
 
@@ -257,17 +273,21 @@ def generate_questions(model_choice, passage, llm_client):
     try:
         model = config.MISTRAL_MODEL if model_choice == config.MISTRAL_MODEL_CHOICE else config.OPENAI_MODEL
 
-        raw_output = call_llm_chat(llm_client, model, "You are an IELTS Reading tutor.", prompt)
-        cleaned = re.sub(r"^```json\s*|\s*```$", "", raw_output.strip())
+        raw_output = call_llm_chat(llm_client, model, system_prompt, user_prompt)
+        cleaned = json.load(raw_output)
         logger.debug(f"Raw LLM JSON response:\n{cleaned}")
 
-        return json.loads(cleaned)
+        return cleaned
     
+    except json.JSONDecodeError as json_e:
+        logger.error("%s - Invalid JSON from LLM: %s", validate_status(ProcessingStatus.QUESTION_GEN_FAILED), json_e, exc_info=True)
+        raise
+
     except Exception as e:
-        logger.error("%s - An error occured during questions generation process: %s", 
+        logger.error("%s - An error has occurred during questions generation process: %s", 
                      validate_status(ProcessingStatus.QUESTION_GEN_FAILED), e, exc_info=True)
 
-        return None
+        raise
     
 @celery_app.task(bind = True, max_retries = 3, default_retry_delay = 60, acks_late = True)
 # Celery task to process query AND passage AND questions generation
@@ -276,24 +296,24 @@ def process_query_task(self, query, chosen_LLM):
     logger.info(f"[PROCESS QUERY TASK STARTS]. Task ID: {task_id}, Query: {query}, Chosen LLM: {chosen_LLM}")
     task_result = {}
 
-    pc, index = initialize_pinecone()
-    llm_client = initialize_selected_llm(chosen_LLM)
-
-    if not pc or not index:
-        task_result['status'] = validate_status(ProcessingStatus.PINECONE_INIT_FAILED)
-        task_result['error_message'] = "Pinecone client or index failed to initialized"
-        logger.critical(f"[PROCESS QUERY TASK FAILED]. Task ID: {task_id}, Task result: {task_result['error_message']}")
-
-        return task_result
-    
-    if not llm_client:
-        task_result['status']  = validate_status(ProcessingStatus.LLM_INIT_FAILED)
-        task_result['error_message'] = "LLM model failed to initialized"
-        logger.critical(f"[PROCESS QUERY TASK FAILED]. Task ID: {task_id}, Task result: {task_result['error_message']}")
-
-        return task_result
-
     try:
+        pc, index = initialize_pinecone()
+        llm_client = initialize_selected_llm(chosen_LLM)
+
+        if not pc or not index:
+            task_result['status'] = validate_status(ProcessingStatus.PINECONE_INIT_FAILED)
+            task_result['error_message'] = "Pinecone client or index failed to initialized"
+            logger.critical(f"[PROCESS QUERY TASK FAILED]. Task ID: {task_id}, Task result: {task_result['error_message']}")
+
+            return task_result
+        
+        if not llm_client:
+            task_result['status']  = validate_status(ProcessingStatus.LLM_INIT_FAILED)
+            task_result['error_message'] = "LLM model failed to initialized"
+            logger.critical(f"[PROCESS QUERY TASK FAILED]. Task ID: {task_id}, Task result: {task_result['error_message']}")
+
+            return task_result
+
         start = time.time()
         retrieved_passage = query_passage(query, pc, index)
         logger.info("Query took %.2f seconds", time.time() - start)
@@ -304,7 +324,7 @@ def process_query_task(self, query, chosen_LLM):
             logger.error(f"[PROCESS QUERY TASK FAILED]. Task ID: {task_id}, Task result: {task_result['error_message']}")
 
             return task_result
-        
+            
         generated_passage = generate_reading_passages(chosen_LLM, query, retrieved_passage)
 
         if not generated_passage:
@@ -313,7 +333,7 @@ def process_query_task(self, query, chosen_LLM):
             logger.error(f"[PRORCESS QUERY TASK FAILED]. Task ID: {task_id}, Task result: {task_result['error_message']}")
 
             return task_result
-        
+            
         generate_questions_list = generate_questions(chosen_LLM, generated_passage)
 
         if not generate_questions_list:
@@ -322,7 +342,7 @@ def process_query_task(self, query, chosen_LLM):
             logger.error(f"[PROCESS QUERY TASK FAILED]. Task ID: {task_id}, Task result: {task_result['error_message']}")
 
             return task_result
-        
+            
         task_result['status'] = validate_status(ProcessingStatus.QUERY_SUCCESS)
         task_result['passage'] = generated_passage
         task_result['questions'] = generate_questions_list

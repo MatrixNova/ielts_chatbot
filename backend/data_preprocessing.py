@@ -15,8 +15,8 @@ try:
     logger.info("celery_app has been successfully imported from Celery")
 
 except ImportError as e:
-    logger.exception(f"An exception has occurred when importing celery_app instance."
-                     "Ensure celery.py exist in the project root. Error: {e}")
+    logger.exception("An exception has occurred when importing celery_app instance."
+                     f"Ensure celery.py exist in the project root. Error: {e}")
     raise
 
 # Database Pooling Context Manager Import
@@ -25,8 +25,8 @@ try:
     logger.info("db_connection context manager has been successfully imported from db_pool_setup")
 
 except ImportError as e:
-    logger.exception(f"An exception has occured when importing db_connection context manager."
-                     "Ensure db_pool_setup.py exist in the project root. Error: {e}")
+    logger.exception("An exception has occured when importing db_connection context manager."
+                     f"Ensure db_pool_setup.py exist in the project root. Error: {e}")
     
     # Ensure that the files will parse, but the tasks will fail
     class db_connection():
