@@ -22,7 +22,13 @@ APP_NAME = "ielts_assistant"
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_BACKEND")
 
-# Database Configuration
+# Redis Configuration
+REDIS_HOST = os.getenv("REDIS_HOST")
+REDIS_PORT = os.getenv("REDIS_PORT")
+REDIS_DB = os.getenv("REDIS_DB")
+REDIS_LOG_LIST_KEY_PREFIX = "chatlogs_list:"
+
+# PostgreSQL Configuration
 POSTGRES_DB_MIN_CONN = os.getenv("POSTGRES_DB_MIN_CONN")
 POSTGRES_DB_MAX_CONN = os.getenv("POSTGRES_DB_MAX_CONN")
 POSTGRES_DBNAME = os.getenv("POSTGRES_DBNAME")
@@ -31,8 +37,8 @@ POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST") 
 POSTGRES_PORT = os.getenv("POSTGRES_PORT")     
 
-MONGO_DB_URI = os.getenv("MONGO_DB_URI")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "ielts-chatlog-history") # Default name
+# AWS S3 Configuration
+AWS_BUCKET_NAME = os.getenv("AWS_BUCKET_NAME")
 
 # Pinecone Configuration
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -70,6 +76,8 @@ LOG_FORMAT = '%(asctime)s - %(levelname)s - [%(name)s:%(funcName)s] - %(message)
 DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 LOG_BACKUP_COUNT = 3
+LOG_BUFFER_THRESHOLD = 100
+LOG_BUFFER_TTL_SECONDS = 3600           # Time-to-time live for Redis log buffer
 
 # Logging Setup Function
 def setup_logging():
