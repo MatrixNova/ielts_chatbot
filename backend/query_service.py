@@ -274,7 +274,7 @@ def generate_questions(model_choice, passage, llm_client):
         model = config.MISTRAL_MODEL if model_choice == config.MISTRAL_MODEL_CHOICE else config.OPENAI_MODEL
 
         raw_output = call_llm_chat(llm_client, model, system_prompt, user_prompt)
-        cleaned = json.load(raw_output)
+        cleaned = json.loads(raw_output)
         logger.debug(f"Raw LLM JSON response:\n{cleaned}")
 
         return cleaned

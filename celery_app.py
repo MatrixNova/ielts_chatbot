@@ -1,8 +1,8 @@
 import config
-from celery_app import Celery, signals
+from celery import Celery, signals
 from backend import db_pool_setup
 
-if not config.CELERY:
+if not config.CELERY_BROKER_URL:
     raise ValueError("An error has occured. CELERY_BROKER_URL not found in config")
 
 celery_app = Celery(
@@ -11,7 +11,9 @@ celery_app = Celery(
     backend = config.CELERY_RESULT_BACKEND,
     include = ['backend.data_preprocessing',
                'backend.text_embedding',
-               'backend.query_service']
+               'backend.query_service',
+               'backend.text_embedding',
+               'backend.chatlog_storage']
 )
 
 celery_app.conf.update(
@@ -21,8 +23,14 @@ celery_app.conf.update(
     timezone='Asia/Ho_Chi_Minh', 
     enable_utc=True,
 
-    task_route = {
-        'backend.data_preprocessing.process_single_pdf_task': {'queue': 'data_preprocessing'}
+    task_routes={
+        'backend.data_preprocessing.process_single_PDF_task': {'queue': 'data_preprocessing'},
+        'backend.text_embedding.prepare_vectors_task': {'queue': 'embedding'}, # Matches queue in text_embedding.py
+        'backend.text_embedding.upsert_vectors_task': {'queue': 'embedding'},    # Matches queue in text_embedding.py
+        'backend.query_service.process_query_task': {'queue': 'query'},
+        'backend.evaluation_service.evaluate_answers_task': {'queue': 'evaluation'},
+        'backend.chatlog_storage.store_batch_chat_logs_task': {'queue': 'logging'},
+        'backend.chatlog_storage.flush_all_chat_logs': {'queue': 'periodic_tasks'} # For periodic tasks
     },
 
     task_acks_late = True,
@@ -33,11 +41,23 @@ import logging
 logger = logging.getLogger(config.APP_NAME)
 
 @signals.worker_process_init.connect
-def initialize_worker(**kwargs):
-    logger.info("Initialize Celery worker process")
-    db_pool_setup.initialize_pool()
+def initialize_worker_process(**kwargs):
+    logger.info("Initializing Celery worker process")
 
-@signals.worker_process_close.connect
-def close_worker(**kwargs):
-    logger.info("Closing down Celery worker process")
-    db_pool_setup.close_pool()
+    try:
+        db_pool_setup.initialize_pool()
+        logger.info("Database pool initialized for worker process.")
+
+    except Exception as e:
+        logger.error(f"Error initializing database pool in worker: {e}", exc_info=True)
+
+@signals.worker_process_shutdown.connect # Corrected signal
+def shutdown_worker_process(**kwargs):
+    logger.info("Shutting down Celery worker process")
+
+    try:
+        db_pool_setup.close_pool()
+        logger.info("Database pool closed for worker process.")
+    except Exception as e:
+
+        logger.error(f"Error closing database pool in worker: {e}", exc_info=True)
