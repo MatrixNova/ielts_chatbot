@@ -12,7 +12,7 @@ celery_app = Celery(
     include = ['backend.data_preprocessing',
                'backend.text_embedding',
                'backend.query_service',
-               'backend.text_embedding',
+               'backend.evaluation_service',
                'backend.chatlog_storage']
 )
 

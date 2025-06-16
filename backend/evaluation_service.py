@@ -295,17 +295,33 @@ def evaluate_answers_task(self, model_choice, passage_content, questions_string,
     logger.info(f"[EVALUATION TASK START]. Task ID: {task_id}.")
     
     try:
-        llm_client = call_llm_chat(model_choice)
+        # Step 1: CORRECTLY initialize the LLM client
+        llm_client = initialize_llm_clients(model_choice)
 
         if not llm_client:
             raise ValueError("LLM client initialization has failed")
         
+        # Step 2: Determine the correct API model name based on the choice
+        model_name_for_api = ""
+        if model_choice == config.OPENAI_MODEL_CHOICE:
+            model_name_for_api = config.OPENAI_MODEL
+        elif model_choice == config.DEEPSEEK_MODEL_CHOICE:
+            model_name_for_api = config.DEEPSEEK_MODEL
+        elif model_choice == config.MISTRAL_MODEL_CHOICE:
+            # This logic was missing before
+            model_name_for_api = config.MISTRAL_MODEL
+        
+        if not model_name_for_api:
+            raise ValueError(f"Could not determine the API model name for the choice: {model_choice}")
+
+        # Step 3: Create the prompts
         system_prompt, user_prompt = create_evaluation_prompt(passage_content, questions_string, user_answers)
 
-        evaluation = call_llm_chat(llm_client, model_choice, system_prompt, user_prompt)
+        # Step 4: Call the LLM with the correct client and model name
+        evaluation = call_llm_chat(llm_client, model_name_for_api, system_prompt, user_prompt)
 
+        # Step 5: Process the results (no changes here)
         evaluation_results = parse_evaluation_string(evaluation)
-
         feedback, struggling_types = get_feedback(evaluation_results, questions_data)   
 
         result =  {
@@ -320,4 +336,5 @@ def evaluate_answers_task(self, model_choice, passage_content, questions_string,
 
     except Exception as e:
         logger.error(f"[EVALUATE TASK FAILED]. Task ID: {task_id}, Error: {e}", exc_info=True)
+        # Using raise self.retry() will allow Celery to attempt the task again
         raise self.retry(exc=e, countdown=30)
