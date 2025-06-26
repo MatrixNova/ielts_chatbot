@@ -5,13 +5,12 @@ import random
 import time
 import json
 
-# --- 1. Standard Library Imports & Setup ---
 import chainlit as cl
 from chainlit.element import TaskList, Task
 from chainlit.message import Message
 from celery.result import AsyncResult
 
-# --- 2. Setup Project Root Path ---
+# Project Root Path
 project_root = None
 try:
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -22,7 +21,6 @@ except Exception as e:
     logging.error(f"CRITICAL: Failed to set project root path: {e}", exc_info=True)
     raise
 
-# --- 3. Import 'config' and Initialize Logger ---
 try:
     import config
     logger = logging.getLogger(config.APP_NAME)
@@ -36,7 +34,7 @@ except Exception as e:
     logging.basicConfig(level=logging.INFO)
     logger.error(f"Error during config/logging setup: {e}. Using basic logger.", exc_info=True)
 
-# --- 4. Application-Specific Imports ---
+# Import Celery
 try:
     from celery_app import celery_app
     from backend.query_service import process_query_task
@@ -47,7 +45,7 @@ except ImportError as e:
     logger.error("ImportError while loading application modules.", exc_info=True)
     raise
 
-# --- Helper Functions (Unchanged) ---
+# Helper Functions
 def format_questions_for_display(questions_list):
     if not questions_list: return "No questions were generated."
     display_text = "Here are your questions:\n\n"
@@ -60,15 +58,13 @@ def format_evaluation_for_display(evaluation_string):
     if not evaluation_string: return "No evaluation data received."
     return evaluation_string
 
-# --- Define Default Actions ---
+# Define the actions
 INITIAL_ACTIONS_LIST = [
     cl.Action(name="generate_new_passage", value="new_passage", payload={'value': "new_passage"}, label="📚 Practice with a new passage (random topic)"),
     cl.Action(name="generate_custom_passage", value="custom_passage", payload={'value': "custom_passage"}, label="✏️ Enter a topic for a new passage"),
     cl.Action(name="change_llm", value="change_llm", payload={'value': "change_llm"}, label="⚙️ Change LLM Model")
 ]
-
-# --- NEW HELPER FUNCTIONS for automatic result display ---
-
+# Automatic result display
 async def await_task_result(task_id: str, task_list_ui: TaskList):
     """
     Polls a Celery task until it's ready and returns the result.
@@ -92,9 +88,6 @@ async def await_task_result(task_id: str, task_list_ui: TaskList):
         return {"status": "TASK_FAILED", "error_message": "An unexpected error occurred while monitoring the task."}
 
 async def run_and_display_task(task_type: str, task_callable, **kwargs):
-    """
-    A generic function to run a task, show a loading UI, and process the result automatically.
-    """
     task_list = TaskList(tasks=[
         Task(title=f"Running {task_type} task...", status=cl.TaskStatus.RUNNING)
     ])
@@ -104,8 +97,7 @@ async def run_and_display_task(task_type: str, task_callable, **kwargs):
         task = task_callable.delay(**kwargs)
         if not task or not task.id:
             raise ConnectionError("Failed to dispatch task to Celery.")
-        
-        # This now waits for the result instead of requiring the user to type 'status'
+
         result = await await_task_result(task.id, task_list)
         
         # Process the result based on task type
@@ -130,13 +122,37 @@ async def run_and_display_task(task_type: str, task_callable, **kwargs):
 
         elif task_type == "Evaluation":
             if result and result.get("evaluation"):
-                full_response = f"{format_evaluation_for_display(result.get('evaluation'))}\n\n{result.get('feedback')}"
-                await cl.Message(content=full_response).send()
+                # Display the evaluation and the simplified feedback text
+                await cl.Message(content=result.get("evaluation")).send()
+                await cl.Message(content=result.get("feedback")).send()
+
+                # Follow up actions
+                follow_up_actions = []
+                struggling_types = result.get("struggling_types", [])
+
+                # 1. Add "Practice struggling types" button ONLY if there are any
+                if struggling_types:
+                    practice_label = ", ".join(struggling_types)
+                    follow_up_actions.append(
+                        cl.Action(name="practice_struggling", value="practice", payload={'value': practice_label}, label=f"🎯 Practice: {practice_label}")
+                    )
+                
+                # 2. Add the standard follow-up buttons
+                follow_up_actions.extend([
+                    cl.Action(name="generate_new_passage", value="new_passage", payload={'value': "new_passage"}, label="📚 Try a new random passage"),
+                    cl.Action(name="retry_passage", value="retry", payload={'value': "retry"}, label="🔄 Retry the same topic"),
+                    cl.Action(name="end_session", value="end_session", payload={'value': "end_session"}, label="🏁 End Session")
+                ])
+                
+                # Send the message with the new buttons
+                await cl.Message(content="What would you like to do next?", actions=follow_up_actions).send()
+
             else:
                 error_msg = result.get('error_message', 'An unknown error occurred.')
                 await cl.Message(content=f"Sorry, the evaluation task failed: {error_msg}").send()
+                # If eval fails, show the initial actions
+                await cl.Message(content="Please choose an action:", actions=INITIAL_ACTIONS_LIST).send()
             
-            await cl.Message(content="What would you like to do next?", actions=INITIAL_ACTIONS_LIST).send()
             cl.user_session.set("state", "INITIAL")
 
     except Exception as e:
@@ -145,14 +161,13 @@ async def run_and_display_task(task_type: str, task_callable, **kwargs):
         await cl.Message(content=f"An error occurred: {e}").send()
 
 
-# --- Action Callbacks ---
-
+# Action Callbacks
 @cl.on_chat_start
 async def start_chat():
     chat_id_val = str(time.time())
     cl.user_session.set("chat_id", chat_id_val)
     cl.user_session.set("state", "INITIAL")
-    # Using your original "GPT 4.1" as the default display name
+
     llm_model_choice = getattr(config, 'OPENAI_MODEL_CHOICE', 'GPT 4.1')
     cl.user_session.set("llm_choice", llm_model_choice)
     logger.info(f"Chat started. Session ID: {chat_id_val}, LLM: {llm_model_choice}")
@@ -180,14 +195,12 @@ async def on_custom_passage(action: cl.Action):
 async def on_change_llm(action: cl.Action):
     actions = [
         cl.Action(name="llm_selected", value=config.OPENAI_MODEL_CHOICE, payload={'value': config.OPENAI_MODEL_CHOICE}, label=f"🤖 {config.OPENAI_MODEL_CHOICE}"),
-        cl.Action(name="llm_selected", value=config.MISTRAL_MODEL_CHOICE, payload={'value': config.MISTRAL_MODEL_CHOICE}, label=f"🤖 {config.MISTRAL_MODEL_CHOICE}"),
-        cl.Action(name="llm_selected", value=config.DEEPSEEK_MODEL_CHOICE, payload={'value': config.DEEPSEEK_MODEL_CHOICE}, label=f"🤖 {config.DEEPSEEK_MODEL_CHOICE}")
+        cl.Action(name="llm_selected", value=config.MISTRAL_MODEL_CHOICE, payload={'value': config.MISTRAL_MODEL_CHOICE}, label=f"🤖 {config.MISTRAL_MODEL_CHOICE}")
     ]
     await cl.Message(content="Select the LLM model for passage generation:", actions=actions).send()
 
 @cl.action_callback("llm_selected")
 async def on_llm_selected(action: cl.Action):
-    # This function is now consolidated and correct for your environment
     chosen_llm = action.payload.get('value')
     cl.user_session.set("llm_choice", chosen_llm)
     await cl.Message(content=f"LLM model changed to: {chosen_llm}").send()
@@ -196,9 +209,6 @@ async def on_llm_selected(action: cl.Action):
 
 @cl.action_callback("eval_model_selected")
 async def on_eval_model_selected(action: cl.Action):
-    """
-    NEW: This callback handles the user's choice of evaluation model.
-    """
     eval_model_choice = action.payload.get("value")
     await cl.Message(content=f"Okay, evaluating with **{eval_model_choice}**...").send()
     
@@ -219,6 +229,8 @@ async def main_logic(message: Message):
     logger.info(f"Chat ID {cl.user_session.get('chat_id')}: Received '{user_message_content}' in state '{current_state}'")
 
     if current_state == "AWAITING_TOPIC":
+        cl.user_session.set("last_query", user_message_content)
+
         await cl.Message(content="Generating your passage and questions...").send()
         await run_and_display_task(
             task_type="Passage Generation",
@@ -228,7 +240,6 @@ async def main_logic(message: Message):
         )
 
     elif current_state == "AWAITING_ANSWERS":
-        # MODIFIED: Ask user for evaluation model choice instead of evaluating immediately.
         cl.user_session.set("user_answers", user_message_content) # Save the answers
         
         eval_actions = [

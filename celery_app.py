@@ -25,12 +25,12 @@ celery_app.conf.update(
 
     task_routes={
         'backend.data_preprocessing.process_single_PDF_task': {'queue': 'data_preprocessing'},
-        'backend.text_embedding.prepare_vectors_task': {'queue': 'embedding'}, # Matches queue in text_embedding.py
-        'backend.text_embedding.upsert_vectors_task': {'queue': 'embedding'},    # Matches queue in text_embedding.py
+        'backend.text_embedding.prepare_vectors_task': {'queue': 'embedding'}, 
+        'backend.text_embedding.upsert_vectors_task': {'queue': 'embedding'},   
         'backend.query_service.process_query_task': {'queue': 'query'},
         'backend.evaluation_service.evaluate_answers_task': {'queue': 'evaluation'},
         'backend.chatlog_storage.store_batch_chat_logs_task': {'queue': 'logging'},
-        'backend.chatlog_storage.flush_all_chat_logs': {'queue': 'periodic_tasks'} # For periodic tasks
+        'backend.chatlog_storage.flush_all_chat_logs': {'queue': 'periodic_tasks'} 
     },
 
     task_acks_late = True,
@@ -51,7 +51,7 @@ def initialize_worker_process(**kwargs):
     except Exception as e:
         logger.error(f"Error initializing database pool in worker: {e}", exc_info=True)
 
-@signals.worker_process_shutdown.connect # Corrected signal
+@signals.worker_process_shutdown.connect 
 def shutdown_worker_process(**kwargs):
     logger.info("Shutting down Celery worker process")
 

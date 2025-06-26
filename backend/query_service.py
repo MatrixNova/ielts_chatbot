@@ -9,6 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed
 import logging
 
 from backend import context_layer
+from backend import prompt_templates
 
 logger = logging.getLogger(config.APP_NAME)
 
@@ -57,27 +58,29 @@ def initialize_pinecone():
         return None, None
 
 def initialize_selected_llm(model_choice):
-    # This function remains the same as your original
+    safe_model_choice = model_choice.strip()
     try:
-        if model_choice == config.MISTRAL_MODEL_CHOICE:
+        if safe_model_choice == config.MISTRAL_MODEL_CHOICE.strip():
             api_key = config.MISTRAL_API_KEY
             if not api_key: raise ValueError("Mistral API key not found")
             logger.info("Mistral client initialized.")
             return OpenAI(api_key=api_key, base_url="https://api.mistral.ai/v1")
-        elif model_choice == config.OPENAI_MODEL_CHOICE:
+
+        elif safe_model_choice == config.OPENAI_MODEL_CHOICE.strip():
             api_key = config.OPENAI_API_KEY
             if not api_key: raise ValueError("OpenAI API key not found")
             logger.info("OpenAI client initialized.")
             return OpenAI(api_key=api_key)
+
         else:
-            raise ValueError(f"Unsupported model for passage generation: {model_choice}")
+            raise ValueError(f"Unsupported model for passage generation: '{safe_model_choice}'")
+
     except Exception as e:
         logger.critical("LLM Client initialization failed: %s", e, exc_info=True)
         return None
 
 @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
 def call_llm_chat(client, model_name, system_prompt, user_prompt):
-    # This function remains the same as your original
     try:
         response = client.chat.completions.create(
             model=model_name,
@@ -93,52 +96,23 @@ def call_llm_chat(client, model_name, system_prompt, user_prompt):
 # The old 'query_passage' function has been REMOVED from this file.
 
 def generate_reading_passages(model_choice: str, query: str, context: str, llm_client):
-    """
-    UPDATED: This function now takes a pre-built context string.
-    If the context is empty, it generates a passage from the query topic alone.
-    """
-    if not context:
-        # This context is used when Pinecone results are below the relevance threshold
-        final_context = f"A comprehensive, 700-800 word IELTS-style academic reading passage about the topic: {query}"
-        logger.info("Generating passage from query topic only.")
-    else:
-        # This context is used when Pinecone provides relevant documents
-        final_context = context
-        logger.info("Generating passage from retrieved Pinecone context.")
+    system_prompt, user_prompt = prompt_templates.get_passage_generation_prompts(context, query)
 
-    system_prompt = "You are an IELTS Reading expert. Your task is to generate an IELTS-style academic reading passage."
-    user_prompt = (
-        f"""Based on the following, generate an IELTS-style academic reading passage.
-        The passage should be approximately 700–800 words long, organized into 4–6 paragraphs, with an academic tone and a suitable title.
-        Do NOT include any questions, answers, or extra instructions.
-
-        Context:
-        \"\"\"{final_context}\"\"\"
-        """
-    )
     try:
         model_name = ""
+
         if model_choice == config.MISTRAL_MODEL_CHOICE: model_name = config.MISTRAL_MODEL
         elif model_choice == config.OPENAI_MODEL_CHOICE: model_name = config.OPENAI_MODEL
         
         return call_llm_chat(llm_client, model_name, system_prompt, user_prompt)
+    
     except Exception as e:
         logger.error("Passage generation failed: %s", e, exc_info=True)
         return None
 
 def generate_questions(model_choice, passage, llm_client):
-    # This function remains largely the same
-    system_prompt = "You are an IELTS Reading expert tasked with generating 10 IELTS-style questions for the provided passage."
-    user_prompt = (
-        f"""Your task is to output ONLY a valid JSON array of 10 question objects based on the passage below.
-        Alternate between question types like Multiple choice, True/False/Not Given, Matching, and Completion.
-        Each object MUST have these keys: "number" (integer), "type" (string), "text" (string).
-        CRITICAL: Your entire response must be ONLY the JSON array, starting with '[' and ending with ']'. No markdown, no commentary.
+    system_prompt, user_prompt = prompt_templates.get_question_generation_prompts(passage)
 
-        Passage:
-        \"\"\"{passage}\"\"\"
-        """
-    )
     try:
         model_name = ""
         if model_choice == config.MISTRAL_MODEL_CHOICE: model_name = config.MISTRAL_MODEL
@@ -147,9 +121,11 @@ def generate_questions(model_choice, passage, llm_client):
         raw_output = call_llm_chat(llm_client, model_name, system_prompt, user_prompt)
         cleaned_json_string = re.sub(r'```json\s*|\s*```', '', raw_output.strip(), flags=re.DOTALL)
         return json.loads(cleaned_json_string)
+    
     except json.JSONDecodeError as json_e:
         logger.error("Failed to parse JSON from LLM: %s. Raw output was: %s", json_e, raw_output, exc_info=True)
         raise
+    
     except Exception as e:
         logger.error("Question generation process failed: %s", e, exc_info=True)
         raise
